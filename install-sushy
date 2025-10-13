@@ -1,0 +1,66 @@
+
+#  sushy install idea https://cloudcult.dev/sushy-emulator-redfish-for-the-virtualization-nation/#part-ii-containerized-sushy-tools
+#  using sushy for testing with curl https://cloudcult.dev/fishing-for-sushy-with-curl/
+
+## Official Sushy tools docs from OpenStack
+
+# https://docs.openstack.org/sushy/latest/
+
+sudo dnf install podman -yy
+
+# Note the OVMF uses local copy to enable UEFI
+
+sudo mkdir -p /etc/sushy/
+
+cat << "EOF" | sudo tee /etc/sushy/sushy-emulator.conf
+SUSHY_EMULATOR_LISTEN_IP = u'0.0.0.0'
+SUSHY_EMULATOR_LISTEN_PORT = 8000
+SUSHY_EMULATOR_SSL_CERT = None
+SUSHY_EMULATOR_SSL_KEY = None
+SUSHY_EMULATOR_OS_CLOUD = None
+SUSHY_EMULATOR_LIBVIRT_URI = u'qemu:///system'
+SUSHY_EMULATOR_IGNORE_BOOT_DEVICE = True
+SUSHY_EMULATOR_BOOT_LOADER_MAP = {
+    u'UEFI': {
+        u'x86_64': u'/usr/share/OVMF/OVMF_CODE.secboot.fd'
+    },
+    u'Legacy': {
+        u'x86_64': None
+    }
+}
+EOF
+
+export SUSHY_TOOLS_IMAGE=${SUSHY_TOOLS_IMAGE:-"quay.io/metal3-io/sushy-tools"}
+sudo podman pull "${SUSHY_TOOLS_IMAGE}"
+
+# Use quadlet to make systemd service
+# Note the stop timeout added as the service needs to be killed.
+
+cat << "EOF" | sudo tee /etc/containers/systemd/sushy-emulator.container
+[Unit]
+Description=Sushy Emulator Container Service
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=quay.io/metal3-io/sushy-tools
+Name=sushy-emulator
+# Use Host network as in your original command
+Network=host
+# If required Use the equivalent of --privileged needed to access the root libvirt /var/run folder
+SecurityLabelType=container_runtime_t
+
+# Volume mounts are specified directly
+Volume=/etc/sushy:/etc/sushy
+Volume=/var/run/libvirt:/var/run/libvirt
+
+#Stop it forcefully quickly
+StopTimeout=1
+
+# The command and arguments run inside the container
+Exec=sushy-emulator -i :: -p 8000 --config /etc/sushy/sushy-emulator.conf
+
+[Install]
+WantedBy=multi-user.target
+EOF
+

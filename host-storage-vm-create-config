@@ -1,0 +1,58 @@
+
+
+
+## References overall blog with explenations 
+#  intial virt setup https://cloudcult.dev/libvirt-setup-on-rhel-and-fedora/
+#  sushy install idea not used as using podman https://cloudcult.dev/sushy-emulator-redfish-for-the-virtualization-nation/#part-ii-containerized-sushy-tools
+#  using sushy for testing with curl https://cloudcult.dev/fishing-for-sushy-with-curl/
+
+
+
+## Official Sushy tools docs from OpenStack
+
+# https://docs.openstack.org/sushy/latest/
+
+
+
+sudo virsh pool-list
+
+
+##  Check it is using the path /var/lib/libvirt/images 
+# if not then delete the pool if it is empty and define as below.
+# if it is already used change the other references to the path in the virt-install etc.
+
+sudo virsh pool-define-as default --type dir --target /var/lib/libvirt/images
+sudo virsh pool-autostart default
+sudo virsh pool-start default
+
+sudo virsh pool-define-as boot --type dir --target /var/lib/libvirt/boot
+sudo virsh pool-autostart boot
+sudo virsh pool-start boot
+
+
+## Create a disk called tuna in the default pool  (note thin provisioned)
+
+export DISKNAME=tuna
+sudo qemu-img create -f qcow2 /var/lib/libvirt/images/${DISKNAME}.qcow2 50G
+
+##  Create a testing VM which is blank and uses the above empty disk.
+
+
+export BRIDGE=123
+export ISO=sonic-vs.img
+
+sudo virt-install \
+  --name=sonic-tuna \
+  --ram=33384 \
+  --vcpus=8 \
+  --cpu host-passthrough \
+  --os-variant debian12 \
+  --noreboot \
+  --events on_reboot=restart \
+  --noautoconsole \
+  --boot hd,cdrom \
+  --import \
+  --disk path=/var/lib/libvirt/images/${DISKNAME}.qcow2,size=20,pool=default \
+  --disk /var/lib/libvirt/boot/${ISO},device=cdrom \
+  --network type=direct,source=br-${BRIDGE},mac=52:54:00:25:83:a9,source_mode=bridge,model=virtio \
+  --graphics vnc,port=5901,listen=0.0.0.0,password=test123
