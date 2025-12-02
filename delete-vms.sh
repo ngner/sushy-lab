@@ -12,7 +12,7 @@ DISKNAME=tuna
 # make a vm definition 
 ## Note custom --network for my wireless bridge needs changing
 # ignore crc vms
-for domain in $( virsh list --all --name | grep "$BASENAME2" | grep -v crc )
+for domain in $( virsh list --all --name | grep "$BASENAME" | grep -v crc )
 do
   echo "working on $domain for BASENAME $BASENAME"
   virsh destroy $domain
