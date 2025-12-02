@@ -14,10 +14,10 @@ spec:
   rootDeviceHints:
     deviceName: /dev/vda
   bmc:
-    address: redfish-virtualmedia+http://172.23.3.24:8000/redfish/v1/Systems/aa035696-f470-4dd3-93a3-f5418d2743b5
+    address: redfish-virtualmedia+http://192.168.188.50:8000/redfish/v1/Systems/4053d06f-4be8-48fe-88f8-55015f5e8fe7
     credentialsName: bmc-secret
     disableCertificateVerification: true
-  bootMACAddress: '52:54:00:22:4d:4b'
+  bootMACAddress: 'aa:aa:aa:aa:aa:01'
   bootMode: UEFI
   online: true
 ---
@@ -36,10 +36,10 @@ spec:
   rootDeviceHints:
     deviceName: /dev/vda
   bmc:
-    address: redfish-virtualmedia+http://172.23.3.24:8000/redfish/v1/Systems/d57af6a9-b191-4c34-a7d0-7acc274eb38c
+    address: redfish-virtualmedia+http://192.168.188.50:8000/redfish/v1/Systems/20f27c85-1405-46ea-878e-0543387372a3
     credentialsName: bmc-secret
     disableCertificateVerification: true
-  bootMACAddress: '52:54:00:22:4d:4c'
+  bootMACAddress: 'aa:aa:aa:aa:aa:02'
   bootMode: UEFI
   online: true
 ---
@@ -58,9 +58,8 @@ spec:
   rootDeviceHints:
     deviceName: /dev/vda
   bmc:
-    address: redfish-virtualmedia+http://172.23.3.24:8000/redfish/v1/Systems/31f1e741-d6b3-4800-a3b1-a7311411da4a
-    credentialsName: bmc-secret
+    address: redfish-virtualmedia+http://192.168.188.50:8000/redfish/v1/Systems/122c8bc4-4371-4d8e-939d-3dbce12d0864
     disableCertificateVerification: true
-  bootMACAddress: '52:54:00:22:4d:4d'
+  bootMACAddress: 'aa:aa:aa:aa:aa:03'
   bootMode: UEFI
   online: true

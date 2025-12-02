@@ -1,28 +1,29 @@
 
 #!/bin/bash
 
-NUMVMS=3
-DELETEPOOL=true
 
-# make a tmp file location
-tmpfile=$(mktemp /tmp/sushy-domain.XXXXXX)
+DELETEPOOL=true
+NETWORK=br0
+#NETWORK=routednet
+BASENAME=sonic-tuna
+DISKNAME=tuna
+
 
 # make a vm definition 
 ## Note custom --network for my wireless bridge needs changing
-for node in $( seq 1 $NUMVMS )
+# ignore crc vms
+for domain in $( virsh list --all --name | grep "$BASENAME2" | grep -v crc )
 do
-  virsh destroy vbmc-node-$node
-  virsh undefine vbmc-node-$node --remove-all-storage
+  echo "working on $domain for BASENAME $BASENAME"
+  virsh destroy $domain
+  virsh undefine $domain
 done
 
 
+sudo virsh vol-list testPool | grep $DISKNAME | awk '{print $1}' | sudo xargs -L 1 virsh vol-delete --pool testPool
+
 if $DELETEPOOL
 then
-   for node in $(seq 1 $NUMVMS)
-   do
-     virsh vol-delete testVol$node
-   done
   virsh pool-destroy testPool
   virsh pool-delete testPool
 fi
-

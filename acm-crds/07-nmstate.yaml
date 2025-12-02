@@ -3,91 +3,91 @@ apiVersion: agent-install.openshift.io/v1beta1
 kind: NMStateConfig
 metadata:
   name: master-0
-  namespace: mce
+  namespace: managed1
   labels:
-    cluster-name: mce
+    cluster-name: managed1
 spec:
   config:
     dns-resolver:
       config:
         server:
-          - 192.168.130.1
+          - 192.168.168.1
     interfaces:
       - ipv4:
           address:
-            - ip: 192.168.130.11
+            - ip: 192.168.188.51
               prefix-length: 24
           dhcp: false
           enabled: true
         ipv6:
           enabled: false
-        mac-address: '52:54:00:22:4d:4b'
+        mac-address: 'aa:aa:aa:aa:aa:01'
         name: enp1s0
         state: up
         type: ethernet
     routes:
       config:
           - destination: 0.0.0.0/0
-            next-hop-address: 192.168.130.1
+            next-hop-address: 192.168.188.1
             next-hop-interface: enp1s0
             table-id: 254
   interfaces:
-    - macAddress: '52:54:00:22:4d:4b'
+    - macAddress: 'aa:aa:aa:aa:aa:01'
       name: enp1s0
 ---
 apiVersion: agent-install.openshift.io/v1beta1
 kind: NMStateConfig
 metadata:
   name: master-1
-  namespace: mce
+  namespace: managed1
   labels:
-    cluster-name: mce
+    cluster-name: managed1
 spec:
   config:
     dns-resolver:
       config:
         server:
-          - 192.168.130.1
+          - 192.168.168.1
     interfaces:
       - ipv4:
           address:
-            - ip: 192.168.130.12
+            - ip: 192.168.188.52
               prefix-length: 24
           dhcp: false
           enabled: true
         ipv6:
           enabled: false
-        mac-address: '52:54:00:22:4d:4c'
+        mac-address: 'aa:aa:aa:aa:aa:02'
         name: enp1s0
         state: up
         type: ethernet
     routes:
       config:
           - destination: 0.0.0.0/0
-            next-hop-address: 192.168.130.1
+            next-hop-address: 192.168.188.1
             next-hop-interface: enp1s0
             table-id: 254
   interfaces:
-    - macAddress: '52:54:00:22:4d:4c'
+    - macAddress: 'aa:aa:aa:aa:aa:02'
       name: enp1s0
 ---
 apiVersion: agent-install.openshift.io/v1beta1
 kind: NMStateConfig
 metadata:
   name: master-2
-  namespace: mce
+  namespace: managed1
   labels:
-    cluster-name: mce
+    cluster-name: managed1
 spec:
   config:
     dns-resolver:
       config:
         server:
-          - 192.168.130.1
+          - 192.168.168.1
     interfaces:
       - ipv4:
           address:
-            - ip: 192.168.130.13
+            - ip: 192.168.188.53
               prefix-length: 24
           dhcp: false
           enabled: true
@@ -100,9 +100,9 @@ spec:
     routes:
       config:
           - destination: 0.0.0.0/0
-            next-hop-address: 192.168.130.1
+            next-hop-address: 192.168.188.1
             next-hop-interface: enp1s0
             table-id: 254
   interfaces:
-    - macAddress: '52:54:00:22:4d:4d'
+    - macAddress: 'aa:aa:aa:aa:aa:03'
       name: enp1s0
