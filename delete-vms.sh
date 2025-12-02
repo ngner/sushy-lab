@@ -2,10 +2,11 @@
 #!/bin/bash
 
 
-DELETEPOOL=true
+DELETEPOOL=false
+
 NETWORK=br0
 #NETWORK=routednet
-BASENAME=sonic-tuna
+BASENAME=3nodetuna
 DISKNAME=tuna
 
 
