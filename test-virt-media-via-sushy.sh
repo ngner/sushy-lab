@@ -16,9 +16,9 @@ NETWORK=br0
 BASENAME=3nodetuna
 DISKNAME=tuna
 #Only needed if you want to manually boot machines e.g. discovery images.
-ISO=sonic-vs.img
+ISO=Fedora-netinst-43.iso
 
-# PRINT System information and store in associative array
+# PRINT System information and st#Only ore in associative array
 declare -A SYSTEM_NAMES  # UUID -> Name mapping
 declare -a SYSTEM_UUIDS  # Array of UUIDs for iteration
 
@@ -35,12 +35,10 @@ done < <(curl -s http://$REDFISH_HOST:$REDFISH_PORT/redfish/v1/Systems/ | jq -r 
 
 # Iterate over all UUIDs
 for uuid in "${SYSTEM_UUIDS[@]}"; do
-  echo curl -s http://$REDFISH_HOST:$REDFISH_PORT/redfish/v1/Managers/$uuid/VirtualMedia
+  curl -s http://$REDFISH_HOST:$REDFISH_PORT/redfish/v1/Systems/$uuid/VirtualMedia | jq .
   name="${SYSTEM_NAMES[$uuid]}"
   echo "Processing $name ($uuid)"
 done
-
-exit 0
 
 # Or iterate over keys directly
 for uuid in "${!SYSTEM_NAMES[@]}"; do
@@ -53,17 +51,14 @@ some_uuid="4053d06f-4be8-48fe-88f8-55015f5e8fe7"
 system_name="${SYSTEM_NAMES[$some_uuid]}"
 
 
-exit 0
 
-
-
-for node in $(seq 1 $NUMVMS)
-do
-    nodename=${BASENAME}-${node}
+for uuid in "${SYSTEM_UUIDS[@]}"; do
+    nodename="${SYSTEM_NAMES[$uuid]}"
+    echo "Working on node $nodename (UUID: $uuid)"
 
     ##Insert CD ROM
-    REDFISH_SYSTEM=$(sudo virsh domuuid $nodename)
-    REDFISH_MANAGER=$REDFISH_SYSTEM
+    REDFISH_SYSTEM=$uuid
+    REDFISH_MANAGER=$uuid
     # don't bother to add ISO URL as there is a disk image mounted to the CD ROM at creation of the VM 
     #curl -d \
     #     '{"Image":"'"$ISO_URL"'", "Inserted": true}' \
@@ -85,12 +80,14 @@ do
 done
 
 
-for node in $(seq 1 $NUMVMS)
-do
-    nodename=${BASENAME}-${node}
-    ## POWER OFF
-    REDFISH_SYSTEM=$(sudo virsh domuuid $nodename)
-    REDFISH_MANAGER=$REDFISH_SYSTEM
+
+for uuid in "${SYSTEM_UUIDS[@]}"; do
+    nodename="${SYSTEM_NAMES[$uuid]}"
+    echo "Working on node $nodename (UUID: $uuid)"
+
+    ##Power off or On
+    REDFISH_SYSTEM=$uuid
+    REDFISH_MANAGER=$uuid
     if ! $POWERON
     then
         echo "Powering off $nodename with UUID $REDFISH_SYSTEM"
