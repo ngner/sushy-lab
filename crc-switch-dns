@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Switch CRC DNS resolution between local dnsmasq and VyOS router.
+# Manages laptop HAProxy (ports 80/443/6443 → CRC VM) as needed.
+#
+# Modes:
+#   local           Enable laptop dnsmasq to forward .testing queries
+#                   to the CRC VM DNS at 192.168.130.11.
+#                   Stops HAProxy (not needed; laptop talks to VM directly).
+#   remote <ip>     Disable laptop dnsmasq and configure VyOS router
+#                   authoritative DNS for .testing → <ip>.
+#                   Starts HAProxy if <ip> is this laptop's LAN IP.
+#   status          Show current DNS mode, resolved IP, and HAProxy state.
+#
+# Examples:
+#   crc-switch-dns local
+#   crc-switch-dns remote 192.168.188.55    # remote HAProxy server
+#   crc-switch-dns remote 192.168.1.50      # laptop's LAN IP (starts HAProxy)
+#   crc-switch-dns status
+
+set -euo pipefail
+
+LOCAL_CONF=/etc/NetworkManager/dnsmasq.d/crc.conf
+ANSIBLE_DIR="$HOME/workspace/homenetwork-vyos"
+TEST_HOST=console-openshift-console.apps-crc.testing
+
+_local_active() {
+  [ -f "$LOCAL_CONF" ] && grep -q '^[^#]' "$LOCAL_CONF" 2>/dev/null
+}
+
+_cleanup_legacy() {
+  [ -f /etc/NetworkManager/dnsmasq.d/remote-crc.conf ] && \
+    sudo rm -f /etc/NetworkManager/dnsmasq.d/remote-crc.conf
+}
+
+_is_local_ip() {
+  ip -4 -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -qx "$1"
+}
+
+case "${1:-status}" in
+  local)
+    if [ -f "$LOCAL_CONF" ]; then
+      sudo sed -i 's/^#//' "$LOCAL_CONF"
+    fi
+    _cleanup_legacy
+    sudo systemctl reload NetworkManager
+    sudo systemctl stop haproxy 2>/dev/null || true
+    echo "CRC DNS → local (dnsmasq → CRC VM)"
+    echo "HAProxy stopped (not needed in local mode)"
+    ;;
+
+  remote)
+    TARGET_IP="${2:?Usage: crc-switch-dns remote <ip>}"
+
+    if [ -f "$LOCAL_CONF" ]; then
+      sudo sed -i 's/^[^#]/#&/' "$LOCAL_CONF"
+    fi
+    _cleanup_legacy
+    sudo systemctl reload NetworkManager
+
+    ansible-playbook \
+      "$ANSIBLE_DIR/playbooks/crc-dns.yml" \
+      -e "target_ip=$TARGET_IP"
+
+    if _is_local_ip "$TARGET_IP"; then
+      sudo systemctl start haproxy
+      echo "CRC DNS → remote (VyOS router → $TARGET_IP)"
+      echo "HAProxy started (proxying 80/443/6443 → CRC VM)"
+    else
+      sudo systemctl stop haproxy 2>/dev/null || true
+      echo "CRC DNS → remote (VyOS router → $TARGET_IP)"
+      echo "HAProxy stopped (traffic goes to remote server)"
+    fi
+    ;;
+
+  status)
+    if _local_active; then
+      echo "Mode:       local (dnsmasq forwarding to CRC VM)"
+    else
+      echo "Mode:       remote (VyOS router authoritative)"
+    fi
+    RESOLVED=$(host "$TEST_HOST" 2>/dev/null | awk '/has address/ {print $NF}') || true
+    echo "Resolves:   $TEST_HOST → ${RESOLVED:-<unresolved>}"
+    HAPROXY=$(systemctl is-active haproxy 2>/dev/null) || HAPROXY="unknown"
+    echo "HAProxy:    $HAPROXY"
+    ;;
+
+  *)
+    echo "Usage: crc-switch-dns local | remote <ip> | status"
+    exit 1
+    ;;
+esac

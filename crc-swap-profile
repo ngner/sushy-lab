@@ -1,0 +1,250 @@
+#!/bin/bash
+
+# Configuration
+PROFILES_DIR="$HOME/.crc-profiles"
+MASTER_CACHE="$HOME/.crc-cache-master"
+ACTIVE_LINK="$HOME/.crc"
+PULL_SECRET_SRC="$HOME/pull-secret.json" # Change this to your actual path
+
+mkdir -p "$PROFILES_DIR"
+
+usage() {
+    echo "Usage: $0 {init|create <name>|clone <source> <new-name>|switch <name>|list|upgrade}"
+    exit 1
+}
+
+is_crc_running() {
+    crc status 2>/dev/null | grep -q "Running"
+}
+
+case "$1" in
+    init)
+        echo "--- Initializing Master Cache and Base Profile ---"
+        if [ ! -f "$PULL_SECRET_SRC" ]; then
+            echo "Error: Put your pull-secret.json at $PULL_SECRET_SRC first."
+            exit 1
+        fi
+        
+        # 1. Run standard setup if .crc doesn't exist
+        if [ ! -d "$ACTIVE_LINK" ]; then
+            crc setup
+        fi
+
+        # 2. Ensure the cache is a symlink to the master location
+        if [ -d "$ACTIVE_LINK/cache" ] && [ ! -L "$ACTIVE_LINK/cache" ]; then
+            if [ ! -d "$MASTER_CACHE" ]; then
+                echo "Moving initial cache to master storage..."
+                mv "$ACTIVE_LINK/cache" "$MASTER_CACHE"
+            else
+                echo "Master cache already exists. Removing duplicate cache..."
+                rm -rf "$ACTIVE_LINK/cache"
+            fi
+            ln -s "$MASTER_CACHE" "$ACTIVE_LINK/cache"
+        fi
+        
+        echo "Done. You can now 'save' this as a profile or use 'create'."
+        ;;
+
+    create)
+        NAME=$2
+        [ -z "$NAME" ] && usage
+        echo "--- Creating Profile: $NAME ---"
+        
+        if is_crc_running; then
+            echo "Stop CRC before creating a new profile."
+            exit 1
+        fi
+
+        # Move current .crc to the profiles folder
+        if [ -L "$ACTIVE_LINK" ]; then
+            echo "An active profile link already exists. Use 'switch' instead."
+        elif [ -d "$ACTIVE_LINK" ]; then
+            mv "$ACTIVE_LINK" "$PROFILES_DIR/$NAME"
+            ln -s "$PROFILES_DIR/$NAME" "$ACTIVE_LINK"
+            echo "Profile '$NAME' created and linked."
+        else
+            echo "No existing ~/.crc found. Run 'init' first."
+        fi
+        ;;
+
+    clone)
+        SOURCE=$2
+        NAME=$3
+        [ -z "$SOURCE" ] || [ -z "$NAME" ] && usage
+
+        if [ ! -d "$PROFILES_DIR/$SOURCE" ]; then
+            echo "Error: Source profile '$SOURCE' does not exist in $PROFILES_DIR"
+            exit 1
+        fi
+
+        if [ -d "$PROFILES_DIR/$NAME" ]; then
+            echo "Error: Profile '$NAME' already exists."
+            exit 1
+        fi
+
+        if is_crc_running; then
+            echo "Stop CRC before cloning a profile."
+            exit 1
+        fi
+
+        echo "--- Cloning '$SOURCE' -> '$NAME' ---"
+
+        # We must exclude bin/ because it contains setuid root binaries that cp/rsync cannot read
+        # The user will run 'crc setup' to recreate bin/ in the new profile
+        rsync -a --exclude="bin/" "$PROFILES_DIR/$SOURCE/" "$PROFILES_DIR/$NAME/"
+        _CP_EXIT=$?
+
+        if [ $_CP_EXIT -ne 0 ]; then
+            echo "Error: copy failed (exit code $_CP_EXIT). Cleaning up..."
+            rm -rf "$PROFILES_DIR/$NAME"
+            exit 1
+        fi
+
+        rm -f "$ACTIVE_LINK"
+        ln -s "$PROFILES_DIR/$NAME" "$ACTIVE_LINK"
+        echo "Profile '$NAME' created from '$SOURCE' and linked."
+        echo "IMPORTANT: You must run 'crc setup' to initialize the new profile's bin/ directory."
+        echo "Then run 'crc start' to boot it."
+        ;;
+
+    switch)
+        NAME=$2
+        [ -z "$NAME" ] && usage
+        
+        if [ ! -d "$PROFILES_DIR/$NAME" ]; then
+            echo "Profile '$NAME' does not exist in $PROFILES_DIR"
+            exit 1
+        fi
+
+        if is_crc_running; then
+            echo "Stopping CRC safely before switching..."
+            crc stop
+        fi
+
+        echo "Switching to profile: $NAME"
+        rm -f "$ACTIVE_LINK"
+        ln -s "$PROFILES_DIR/$NAME" "$ACTIVE_LINK"
+        echo "Switched. Run 'crc start' to begin."
+        ;;
+
+    upgrade)
+        echo "--- Upgrading CRC (archive old profiles + refresh cache) ---"
+
+        if is_crc_running; then
+            echo "Stop CRC before upgrading."
+            exit 1
+        fi
+
+        CRC_VERSION=$(crc version 2>/dev/null | head -1 | awk '{print $NF}')
+        ARCHIVE_TAG="${CRC_VERSION:-unknown}-$(date +%Y%m%d)"
+        ARCHIVE_DIR="$HOME/.crc-profiles-${ARCHIVE_TAG}"
+
+        if [ -d "$ARCHIVE_DIR" ]; then
+            echo "Error: Archive $ARCHIVE_DIR already exists. Remove it first or wait a day."
+            exit 1
+        fi
+
+        mkdir -p "$ARCHIVE_DIR"
+
+        if [ -d "$PROFILES_DIR" ] && [ "$(ls -A "$PROFILES_DIR" 2>/dev/null)" ]; then
+            echo "Archiving profiles to $ARCHIVE_DIR ..."
+            mv "$PROFILES_DIR"/* "$ARCHIVE_DIR/"
+        fi
+
+        if [ -d "$MASTER_CACHE" ]; then
+            echo "Archiving master cache..."
+            mv "$MASTER_CACHE" "$ARCHIVE_DIR/_cache"
+        fi
+
+        rm -f "$ACTIVE_LINK"
+
+        echo "Running crc setup for the new version..."
+        crc setup
+
+        if [ -d "$ACTIVE_LINK/cache" ] && [ ! -L "$ACTIVE_LINK/cache" ]; then
+            echo "Moving new cache to master storage..."
+            mv "$ACTIVE_LINK/cache" "$MASTER_CACHE"
+            ln -s "$MASTER_CACHE" "$ACTIVE_LINK/cache"
+        fi
+
+        echo ""
+        echo "=== Upgrade complete ==="
+        echo "Old profiles archived at: $ARCHIVE_DIR"
+        echo "Next steps:"
+        echo "  1. crc start  (boot fresh VM)"
+        echo "  2. Configure your base operators/users"
+        echo "  3. crc stop && crc-swap-profile create base-install"
+        echo "  4. crc-swap-profile clone base-install <demo-name>"
+        ;;
+
+    list)
+        echo "--- Available Profiles ---"
+        ls "$PROFILES_DIR"
+        echo "--- Active Profile ---"
+        readlink "$ACTIVE_LINK" || echo "None (No symlink active)"
+        ;;
+
+    *)
+        usage
+        ;;
+esac
+
+
+###############################################################################
+# OPENSHIFT LOCAL (CRC) PROFILE MANAGER - USAGE GUIDE
+###############################################################################
+#
+# This script manages multiple independent OpenShift environments on Fedora
+# by swapping the ~/.crc directory using symlinks and a master cache.
+#
+# PREREQUISITES:
+#   1. Place your Red Hat pull secret at: ~/pull-secret.json
+#   2. Ensure 'crc' is installed.
+#
+# WORKFLOW:
+#
+# Step 1: Initialize (one-time only)
+#   $ crc-swap-profile init
+#   (Runs 'crc setup' and moves the ~12GB cache to a shared master location)
+#
+# Step 2: Create a "Base" Profile
+#   $ crc start
+#   $ # ... configure your base operators, users, settings ...
+#   $ crc stop
+#   $ crc-swap-profile create base-install
+#
+# Step 3: Create a Specialized Demo (cloned from base-install)
+#   $ crc-swap-profile clone base-install database-demo
+#   $ crc start
+#   $ # ... install your demo-specific apps on top of the base config ...
+#   $ crc stop
+#   (No re-download. The VM is an exact copy of base-install with all your
+#    operators and config already in place.)
+#   $ crc stop
+#   $ crc-swap-profile create <demo-name>
+#
+# Step 4: Switching Between Demos
+#   $ crc-swap-profile switch base-install
+#   $ crc start
+#
+# UPGRADING CRC:
+#   When the crc binary is updated to a new OpenShift version:
+#   $ crc-swap-profile upgrade
+#   This archives all existing profiles and the master cache under
+#   ~/.crc-profiles-<old-version>-<date>/, then re-runs 'crc setup'.
+#   All demos must be rebuilt from scratch after an upgrade.
+#
+# COMMANDS:
+#   init                        First-time setup (crc setup + master cache)
+#   create <name>               Save current ~/.crc as a named profile
+#   clone <source> <new-name>   Copy an existing profile to start a new demo
+#   switch <name>               Switch ~/.crc symlink to a different profile
+#   list                        Show all profiles and the active one
+#   upgrade                     Archive old profiles and refresh for new CRC
+#
+# DIRECTORY STRUCTURE:
+#   ~/.crc                -> Symlink to the currently active profile
+#   ~/.crc-profiles/      -> All stopped demo environments
+#   ~/.crc-cache-master/  -> Single shared copy of the OpenShift image
+#
+###############################################################################
