@@ -1,26 +1,30 @@
 #!/bin/bash
 
-## Note custom --network routednet for my wireless bridge needs changing
 NETWORK=br0
-#NETWORK=routednet
-BASENAME=3nodetuna
-DISKNAME=tuna
-#Only needed if you want to manually boot machines e.g. discovery images.
+BASENAME=4node-cluster
+DISKNAME=bm-node
 ISO=Fedora-netinst-43.iso
 
-
-NUMVMS=3   #NOTE max 9 as used for last digit in MAC
+NUMVMS=4   #NOTE max 9 as used for last digit in MAC
 for node in $(seq 1 $NUMVMS)
 do
-  ## Create a disk called tuna in the testPool pool  (note thin provisioned
-  echo "working on node $node with DISK ${DISKNAME} and basenanme ${BASENAME}"
-  qemu-img create -f qcow2 /var/lib/libvirt/testPoolimages/${DISKNAME}-${node}.qcow2 50G
+  if [ "$node" -le 2 ]; then
+    # SNO nodes
+    RAM=16384
+    VCPUS=8
+  else
+    # Worker nodes
+    RAM=8192
+    VCPUS=2
+  fi
 
-  ##  Create a testing VM which is blank and uses the above empty disk.
-  virt-install \
+  echo "working on node $node with DISK ${DISKNAME} and basenanme ${BASENAME} (RAM: ${RAM}MB, vCPUs: ${VCPUS})"
+  sudo qemu-img create -f qcow2 /var/lib/libvirt/testPoolimages/${DISKNAME}-${node}.qcow2 50G
+
+  sudo virt-install \
     --name=${BASENAME}-${node} \
-    --ram=1024 \
-    --vcpus=2 \
+    --ram=${RAM} \
+    --vcpus=${VCPUS} \
     --cpu host-passthrough \
     --os-variant debian12 \
     --noreboot \
@@ -32,11 +36,9 @@ do
     --disk /var/lib/libvirt/boot/${ISO},device=cdrom \
     --network type=direct,source=${NETWORK},mac=aa:aa:aa:aa:aa:0${node},source_mode=bridge,model=virtio \
     --graphics vnc,port=590${node},listen=0.0.0.0,password=test123
-  domuuid=`sudo virsh domuuid ${BASENAME}-${node}`
+  
+  domuuid=$(sudo virsh domuuid ${BASENAME}-${node})
   echo "${BASENAME}-${node} has domain ID $domuuid"
 done
 
-echo `virsh list --all`
-
-
-
+echo $(sudo virsh list --all)
