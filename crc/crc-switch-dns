@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# Switch CRC DNS resolution between local systemd-resolved and VyOS router.
+# Manages laptop HAProxy (ports 80/443/6443 → CRC VM) as needed.
+#
+# CRC's own 99-crc.sh dispatcher handles local DNS automatically:
+#   crc setup → creates /etc/NetworkManager/dispatcher.d/99-crc.sh
+#   crc start → dispatcher runs: resolvectl dns crc 192.168.130.11
+#                                 resolvectl domain crc ~testing
+# This per-link config is properly scoped (Default Route: no) so only
+# .testing queries go to the CRC VM. No manual "local" step needed.
+#
+# This script handles switching to remote (VyOS) DNS and back:
+#
+# Modes:
+#   local           Revert to CRC-managed per-link DNS (undo a previous
+#                   "remote"). Re-runs the dispatcher to restore config.
+#   remote <ip>     Revert per-link CRC DNS and configure VyOS router
+#                   authoritative DNS for .testing → <ip>.
+#                   Starts HAProxy if <ip> is this laptop's LAN IP.
+#   status          Show current DNS mode, resolved IP, and HAProxy state.
+#
+# Prerequisites:
+#   systemd-resolved active, /etc/resolv.conf → stub-resolv.conf
+#   crc setup (creates 99-crc.sh dispatcher)
+#
+# Examples:
+#   crc start                                 # DNS auto-configured by CRC
+#   crc-switch-dns remote 192.168.188.55      # switch to VyOS
+#   crc-switch-dns local                      # switch back to CRC VM
+#   crc-switch-dns status
+
+set -euo pipefail
+
+ANSIBLE_DIR="$HOME/workspace/homenetwork-vyos"
+TEST_HOST=console-openshift-console.apps-crc.testing
+CRC_DNS=192.168.130.11
+CRC_LINK=crc
+DISPATCHER=/etc/NetworkManager/dispatcher.d/99-crc.sh
+
+# Stale configs from the old global drop-in / NM dnsmasq approach
+STALE_FILES=(
+  /etc/systemd/resolved.conf.d/crc.conf
+  /etc/systemd/resolved.conf.d/crc-testing.conf
+  /etc/NetworkManager/dnsmasq.d/crc.conf
+  /etc/NetworkManager/conf.d/crc-nm-dnsmasq.conf
+  /etc/NetworkManager/dnsmasq.d/remote-crc.conf
+)
+
+_cleanup_stale() {
+  local found=false
+  for f in "${STALE_FILES[@]}"; do
+    if [ -f "$f" ]; then
+      sudo rm -f "$f"
+      echo "Removed stale config: $f"
+      found=true
+    fi
+  done
+  if $found; then
+    sudo systemctl restart systemd-resolved 2>/dev/null || true
+    sudo systemctl reload NetworkManager 2>/dev/null || true
+  fi
+}
+
+_crc_link_exists() {
+  ip link show "$CRC_LINK" &>/dev/null
+}
+
+_local_active() {
+  _crc_link_exists && resolvectl dns "$CRC_LINK" 2>/dev/null | grep -q "$CRC_DNS"
+}
+
+_enable_local() {
+  _cleanup_stale
+  if ! _crc_link_exists; then
+    echo "ERROR: CRC bridge '$CRC_LINK' not found. Is the CRC network active?" >&2
+    echo "Run: crc setup && crc start" >&2
+    exit 1
+  fi
+  if [ -x "$DISPATCHER" ]; then
+    "$DISPATCHER" "$CRC_LINK" up
+  else
+    resolvectl dns "$CRC_LINK" "$CRC_DNS"
+    resolvectl domain "$CRC_LINK" "~testing"
+  fi
+}
+
+_disable_local() {
+  _cleanup_stale
+  if _crc_link_exists; then
+    resolvectl revert "$CRC_LINK" 2>/dev/null || true
+  fi
+}
+
+_is_local_ip() {
+  ip -4 -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -qx "$1"
+}
+
+case "${1:-status}" in
+  local)
+    _enable_local
+    sudo systemctl stop haproxy 2>/dev/null || true
+    echo "CRC DNS → local (per-link on $CRC_LINK → $CRC_DNS)"
+    echo "HAProxy stopped (not needed in local mode)"
+    ;;
+
+  remote)
+    TARGET_IP="${2:?Usage: crc-switch-dns remote <ip>}"
+
+    _disable_local
+
+    ansible-playbook \
+      "$ANSIBLE_DIR/playbooks/crc-dns.yml" \
+      -e "target_ip=$TARGET_IP"
+
+    if _is_local_ip "$TARGET_IP"; then
+      sudo systemctl start haproxy
+      echo "CRC DNS → remote (VyOS router → $TARGET_IP)"
+      echo "HAProxy started (proxying 80/443/6443 → CRC VM)"
+    else
+      sudo systemctl stop haproxy 2>/dev/null || true
+      echo "CRC DNS → remote (VyOS router → $TARGET_IP)"
+      echo "HAProxy stopped (traffic goes to remote server)"
+    fi
+    ;;
+
+  status)
+    if _local_active 2>/dev/null; then
+      echo "Mode:       local (per-link on $CRC_LINK → $CRC_DNS)"
+    else
+      echo "Mode:       off / remote"
+    fi
+
+    if command -v resolvectl &>/dev/null && systemctl is-active --quiet systemd-resolved; then
+      RESOLVED=$(resolvectl query --legend=no "$TEST_HOST" 2>/dev/null \
+        | awk '/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/ {print $2; exit}') || true
+    elif command -v dig &>/dev/null; then
+      RESOLVED=$(dig +short +timeout=2 +tries=1 "$TEST_HOST" 2>/dev/null) || true
+    else
+      RESOLVED=$(host -W 2 "$TEST_HOST" 2>/dev/null | awk '/has address/ {print $NF}') || true
+    fi
+    echo "Resolves:   $TEST_HOST → ${RESOLVED:-<unresolved>}"
+
+    CRC_STATUS=$(crc status 2>/dev/null | awk '/^CRC VM:/ {print $3}') || CRC_STATUS="unknown"
+    echo "CRC VM:     $CRC_STATUS"
+
+    RESOLVED_SVC=$(systemctl is-active systemd-resolved 2>/dev/null) || RESOLVED_SVC="unknown"
+    echo "Resolved:   $RESOLVED_SVC"
+
+    HAPROXY=$(systemctl is-active haproxy 2>/dev/null) || HAPROXY="unknown"
+    echo "HAProxy:    $HAPROXY"
+
+    [ -x "$DISPATCHER" ] && echo "Dispatcher: $DISPATCHER (OK)" || echo "Dispatcher: MISSING (run crc setup)"
+
+    for f in "${STALE_FILES[@]}"; do
+      [ -f "$f" ] && echo "WARNING:    stale config $f"
+    done
+    ;;
+
+  *)
+    echo "Usage: crc-switch-dns local | remote <ip> | status"
+    exit 1
+    ;;
+esac
