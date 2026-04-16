@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Manage DNS records for the networklab spoke cluster on the VyOS router.
+# Follows the same pattern as crc-switch-dns.
+#
+# Modes:
+#   enable <api_ip> <ingress_ip>   Push authoritative DNS for
+#                                  api.networklab.testing and
+#                                  *.apps.networklab.testing to VyOS.
+#   disable                        Remove networklab DNS records from VyOS.
+#   status                         Resolve api.networklab.testing and
+#                                  show current state.
+#
+# Prerequisites:
+#   Ansible + vyos.vyos collection installed
+#   ~/workspace/homenetwork-vyos with VyOS inventory
+#
+# Examples:
+#   networklab-switch-dns enable 192.168.188.100 192.168.188.101
+#   networklab-switch-dns disable
+#   networklab-switch-dns status
+
+set -euo pipefail
+
+ANSIBLE_DIR="$HOME/workspace/homenetwork-vyos"
+TEST_HOST_API=api.networklab.testing
+TEST_HOST_APPS=console-openshift-console.apps.networklab.testing
+
+_resolve() {
+  local host="$1"
+  if command -v resolvectl &>/dev/null && systemctl is-active --quiet systemd-resolved; then
+    resolvectl query --legend=no "$host" 2>/dev/null \
+      | awk '/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/ {print $2; exit}' || true
+  elif command -v dig &>/dev/null; then
+    dig +short +timeout=2 +tries=1 "$host" 2>/dev/null || true
+  else
+    host -W 2 "$host" 2>/dev/null | awk '/has address/ {print $NF}' || true
+  fi
+}
+
+case "${1:-status}" in
+  enable)
+    API_IP="${2:?Usage: networklab-switch-dns enable <api_ip> <ingress_ip>}"
+    INGRESS_IP="${3:?Usage: networklab-switch-dns enable <api_ip> <ingress_ip>}"
+
+    ansible-playbook \
+      "$ANSIBLE_DIR/playbooks/networklab-dns.yml" \
+      -e "api_ip=$API_IP" \
+      -e "ingress_ip=$INGRESS_IP"
+
+    echo "networklab DNS → VyOS router"
+    echo "  api.networklab.testing        → $API_IP"
+    echo "  *.apps.networklab.testing     → $INGRESS_IP"
+    ;;
+
+  disable)
+    ansible-playbook \
+      "$ANSIBLE_DIR/playbooks/networklab-dns.yml" \
+      -e "api_ip=0.0.0.0" \
+      -e "ingress_ip=0.0.0.0" \
+      -e "state=absent"
+
+    echo "networklab DNS records removed from VyOS router."
+    ;;
+
+  status)
+    API_RESOLVED=$(_resolve "$TEST_HOST_API")
+    APPS_RESOLVED=$(_resolve "$TEST_HOST_APPS")
+
+    echo "api.networklab.testing          → ${API_RESOLVED:-<unresolved>}"
+    echo "*.apps.networklab.testing       → ${APPS_RESOLVED:-<unresolved>}"
+    ;;
+
+  *)
+    echo "Usage: networklab-switch-dns enable <api_ip> <ingress_ip> | disable | status"
+    exit 1
+    ;;
+esac
